@@ -130,7 +130,7 @@ jobs:
           else
             # Only look up OPTION_ID if we are actually setting a status
             OPTION_ID=$(jq -r --arg n "$DESIRED" \
-              '.data.organization.projectV2.fields.nodes[] | select(.name=="Status") | .options[] | select(.name | trim == $n) | .id' project.json)
+              '.data.organization.projectV2.fields.nodes[] | select(.name=="Status") | .options[] | select((.name | ltrimstr(" ") | rtrimstr(" ")) == $n) | .id' project.json)
           fi
           # ------------------------------------
           
