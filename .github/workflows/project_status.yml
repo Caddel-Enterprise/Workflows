@@ -139,11 +139,8 @@ jobs:
           fi
 
           # 5. Determine content node id (issue or PR) and guard
-          if [ "$DESIRED" = "Done" ] && [ -n "$ISSUE_NODE_ID" ]; then
-            CONTENT_ID="$ISSUE_NODE_ID"
-          else
-            CONTENT_ID="${PR_NODE_ID:-$ISSUE_NODE_ID}"
-          fi
+          CONTENT_ID="${PR_NODE_ID:-$ISSUE_NODE_ID}"
+          req "$CONTENT_ID" "Content ID (Issue or PR node_id)"
           
           # 6. Try to find an existing item in the project
           gh api graphql -f query='
