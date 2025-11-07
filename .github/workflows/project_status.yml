@@ -160,12 +160,8 @@ jobs:
           fi
           
           # Determine content node id (issue or PR)
-          # When desired status is 'Done' (on merge), we prioritize the issue ID
-          if [ "$DESIRED" = "Done" ]; then
-            CONTENT_ID="$ISSUE_NODE_ID"
-          else
-            CONTENT_ID="${PR_NODE_ID:-$ISSUE_NODE_ID}"
-          fi
+          # Use PR node ID for PR events, issue node ID for issue events
+          CONTENT_ID="${PR_NODE_ID:-$ISSUE_NODE_ID}"
           
           req "$CONTENT_ID" "CONTENT_ID (issue/PR node_id)"
           
