@@ -128,11 +128,18 @@ jobs:
           if [ "$DESIRED" = "REMOVE" ]; then
             OPTION_ID="" # Clear for safety, will be checked later
           else
-            # Only look up OPTION_ID if we are actually setting a status
+            # 1. SIMPLIFY: Only look up OPTION_ID by exact name
+            # If this fails, the issue is likely a non-printing character in the status name.
+            # We will use the explicit match now, as the trim logic was failing.
             OPTION_ID=$(jq -r --arg n "$DESIRED" \
-              '.data.organization.projectV2.fields.nodes[] | select(.name=="Status") | .options[] | select(.name | test("^\\s*\\Q" + $n + "\\E\\s*$")) | .id' project.json)
+              '.data.organization.projectV2.fields.nodes[] | select(.name=="Status") | .options[] | select(.name == $n) | .id' project.json)
           fi
           # ------------------------------------
+          
+          # 2. DEBUGGING STEP: Add an extra check here to prove the value is missing
+          echo "Debug Values Before Check:"
+          echo "  DESIRED     = '$DESIRED'"
+          echo "  OPTION_ID   = '$OPTION_ID'"
           
           # Guards: ensure we have string-like IDs (not empty/numeric)
           req() { test -n "$1" && [[ ! "$1" =~ ^[0-9]+$ ]] || {
@@ -141,7 +148,7 @@ jobs:
           req "$PROJECT_ID" "PROJECT_ID"
           req "$STATUS_FIELD_ID" "STATUS_FIELD_ID"
           
-          # --- CHECK FOR MISSING OPTION_ID FOR NON-REMOVE STATUSES ---
+          # Only run the OPTION_ID check if we aren't removing the item
           if [ "$DESIRED" != "REMOVE" ]; then
             req "$OPTION_ID" "OPTION_ID for '$DESIRED'"
           fi
