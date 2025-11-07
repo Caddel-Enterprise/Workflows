@@ -175,22 +175,17 @@ jobs:
           if [ -z "$ITEM_ID" ] || [ "$ITEM_ID" = "null" ]; then
             # FIX: Manually construct the JSON variable string with quotes
             VARS="{\"project\":\"$PROJECT_ID\", \"content\":\"$CONTENT_ID\"}"
-          
+
             # --- DEBUG ADDITION 1 ---
             echo "Attempting to ADD Item with VARS: $VARS"
             # ------------------------
-
-            # 1. Define the mutation query in a shell variable
-            QUERY='mutation($project:ID!, $content:ID!){
-              addProjectV2ItemById(input:{projectId:$project, contentId:$content}) {
-                item { id }
-              }
-            }'
-          
-            # 2. Use gh api graphql, passing the query variable and piping VARS to stdin
-            # We use the standard JSON payload structure (query + variables)
+        
+            # 1. Define the mutation query in a single line to be valid JSON.
+              QUERY='mutation($project:ID!, $content:ID!){ addProjectV2ItemById(input:{projectId:$project, contentId:$content}) { item { id } } }'
+    
+            # 2. Use echo and pipe the full JSON payload to stdin.
             echo "{\"query\":\"$QUERY\", \"variables\":$VARS}" | gh api graphql --method POST -H 'Content-Type: application/json' > add.json
-          
+            
             ITEM_ID=$(jq -r '.data.addProjectV2ItemById.item.id' add.json)
             if [ -z "$ITEM_ID" ] || [ "$ITEM_ID" = "null" ]; then
               echo "::error ::Failed to add item to project."; sed -n '1,120p' add.json; exit 1;
@@ -199,23 +194,15 @@ jobs:
 
           # Update Status (JSON variables)
           VARS="{\"project\":\"$PROJECT_ID\", \"item\":\"$ITEM_ID\", \"field\":\"$STATUS_FIELD_ID\", \"option\":\"$OPTION_ID\"}"
-
+        
           # --- DEBUG ADDITION 2 ---
           echo "Attempting to UPDATE Status with VARS: $VARS"
           # ------------------------
-
-          # 1. Define the mutation query in a shell variable
-          QUERY='mutation($project:ID!, $item:ID!, $field:ID!, $option:String!) {
-            updateProjectV2ItemFieldValue(input:{
-              projectId:$project,
-              itemId:$item,
-              fieldId:$field,
-              value:{ singleSelectOptionId:$option }
-            }) { projectV2Item { id } }
-          }'
-          
-          # 2. Use gh api graphql, passing the query variable and piping VARS to stdin
-          # We use the standard JSON payload structure (query + variables)
+        
+          # 1. Define the mutation query in a single line to be valid JSON.
+          QUERY='mutation($project:ID!, $item:ID!, $field:ID!, $option:String!) { updateProjectV2ItemFieldValue(input:{ projectId:$project, itemId:$item, fieldId:$field, value:{ singleSelectOptionId:$option } }) { projectV2Item { id } } }'
+        
+          # 2. Use echo and pipe the full JSON payload to stdin.
           echo "{\"query\":\"$QUERY\", \"variables\":$VARS}" | gh api graphql --method POST -H 'Content-Type: application/json'
-
+          
           echo "Set Status => $DESIRED"
