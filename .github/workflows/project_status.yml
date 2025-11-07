@@ -40,7 +40,7 @@ jobs:
           #   - Issue opened → Backlog
           #   - Issue assigned → In Progress
           #   - Issue closed → Done
-          #   - Issue reopened → Ready
+          #   - Issue reopened → In Progress
           # =======================================================
           case "$EVENT_NAME" in
             issues)
@@ -48,7 +48,7 @@ jobs:
                 opened)   desired="Backlog" ;;
                 assigned) desired="In Progress" ;;
                 closed)   desired="Done" ;;
-                reopened) desired="Ready" ;;
+                reopened) desired="In Progress" ;;
               esac
               ;;
             pull_request)
@@ -70,7 +70,7 @@ jobs:
                     desired="REMOVE"                            # Closed w/o merge → REMOVE
                   fi
                   ;;
-                reopened) desired="Ready" ;;
+                reopened) desired="In Progress" ;;
               esac
               ;;
           esac
