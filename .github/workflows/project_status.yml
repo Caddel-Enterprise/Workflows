@@ -163,45 +163,42 @@ jobs:
           
           # Add if missing
           if [ -z "$ITEM_ID" ] || [ "$ITEM_ID" = "null" ]; then
-            # FIX 1: Manually construct VARS with guaranteed quotes
-            VARS="{\"project\":\"$PROJECT_ID\", \"content\":\"$CONTENT_ID\"}"
-            echo "Attempting to ADD Item with VARS: $VARS"
-            
-            # FIX 2: Define query on a SINGLE line
-            QUERY='mutation($project:ID!, $content:ID!){ addProjectV2ItemById(input:{projectId:$project, contentId:$content}) { item { id } } }'
-            
-            # Construct the final JSON payload
-            FULL_PAYLOAD="{\"query\":\"$QUERY\", \"variables\":$VARS}"
-            
-            # --- CRITICAL DEBUG ADDITION ---
-            echo "Final JSON Payload (Piped): $FULL_PAYLOAD"
-            # -------------------------------
-            
-            # FIX 3: Use echo | gh pipe for robust payload delivery
-            echo "$FULL_PAYLOAD" | gh api graphql --method POST -H 'Content-Type: application/json' > add.json
-            
+          
+            echo "Attempting to ADD Item."
+
+            # Use the simple -F flag, but always double-quote the shell variables
+            gh api graphql -f query='
+              mutation($project:ID!, $content:ID!){
+                addProjectV2ItemById(input:{projectId:$project, contentId:$content}) {
+                  item { id }
+                }
+              }' \
+              -F project="$PROJECT_ID" \
+              -F content="$CONTENT_ID" > add.json
+          
             ITEM_ID=$(jq -r '.data.addProjectV2ItemById.item.id' add.json)
             if [ -z "$ITEM_ID" ] || [ "$ITEM_ID" = "null" ]; then
               echo "::error ::Failed to add item to project."; sed -n '1,120p' add.json; exit 1;
             fi
           fi
           
-          # Update Status (JSON variables)
-          # FIX 1: Manually construct VARS with guaranteed quotes
-          VARS="{\"project\":\"$PROJECT_ID\", \"item\":\"$ITEM_ID\", \"field\":\"$STATUS_FIELD_ID\", \"option\":\"$OPTION_ID\"}"
-          echo "Attempting to UPDATE Status with VARS: $VARS"
+          # Update Status
           
-          # FIX 2: Define query on a SINGLE line
-          QUERY='mutation($project:ID!, $item:ID!, $field:ID!, $option:String!) { updateProjectV2ItemFieldValue(input:{ projectId:$project, itemId:$item, fieldId:$field, value:{ singleSelectOptionId:$option } }) { projectV2Item { id } } }'
-          
-          # Construct the final JSON payload
-          FULL_PAYLOAD="{\"query\":\"$QUERY\", \"variables\":$VARS}"
-      
-          # --- CRITICAL DEBUG ADDITION ---
-          echo "Final JSON Payload (Piped): $FULL_PAYLOAD"
-          # -------------------------------
-          
-          # FIX 3: Use echo | gh pipe for robust payload delivery
-          echo "$FULL_PAYLOAD" | gh api graphql --method POST -H 'Content-Type: application/json'
-          
+          echo "Attempting to UPDATE Status."
+
+          # Use the simple -F flag, double-quoting all shell variables
+          gh api graphql -f query='
+            mutation($project:ID!, $item:ID!, $field:ID!, $option:String!) {
+              updateProjectV2ItemFieldValue(input:{
+                projectId:$project,
+                itemId:$item,
+                fieldId:$field,
+                value:{ singleSelectOptionId:$option }
+              }) { clientMutationId }
+            }' \
+            -F project="$PROJECT_ID" \
+            -F item="$ITEM_ID" \
+            -F field="$STATUS_FIELD_ID" \
+            -F option="$OPTION_ID"
+
           echo "Set Status => $DESIRED"
