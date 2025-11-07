@@ -150,7 +150,13 @@ jobs:
           
           # Only run the OPTION_ID check if we aren't removing the item
           if [ "$DESIRED" != "REMOVE" ]; then
-            req "$OPTION_ID" "OPTION_ID for '$DESIRED'"
+            # We ONLY check for non-empty here, as some option IDs can be numeric strings.
+            if [ -z "$OPTION_ID" ] || [ "$OPTION_ID" = "null" ]; then
+                echo "::error ::Missing OPTION_ID for '$DESIRED'"
+                sed -n '1,200p' project.json
+                exit 1
+            fi
+            # NOTE: We skip calling 'req' here to allow numeric IDs.
           fi
           
           # Determine content node id (issue or PR)
