@@ -166,13 +166,20 @@ jobs:
             # FIX 1: Manually construct VARS with guaranteed quotes
             VARS="{\"project\":\"$PROJECT_ID\", \"content\":\"$CONTENT_ID\"}"
             echo "Attempting to ADD Item with VARS: $VARS"
-          
+            
             # FIX 2: Define query on a SINGLE line
             QUERY='mutation($project:ID!, $content:ID!){ addProjectV2ItemById(input:{projectId:$project, contentId:$content}) { item { id } } }'
-          
+            
+            # Construct the final JSON payload
+            FULL_PAYLOAD="{\"query\":\"$QUERY\", \"variables\":$VARS}"
+            
+            # --- CRITICAL DEBUG ADDITION ---
+            echo "Final JSON Payload (Piped): $FULL_PAYLOAD"
+            # -------------------------------
+            
             # FIX 3: Use echo | gh pipe for robust payload delivery
-            echo "{\"query\":\"$QUERY\", \"variables\":$VARS}" | gh api graphql --method POST -H 'Content-Type: application/json' > add.json
-          
+            echo "$FULL_PAYLOAD" | gh api graphql --method POST -H 'Content-Type: application/json' > add.json
+            
             ITEM_ID=$(jq -r '.data.addProjectV2ItemById.item.id' add.json)
             if [ -z "$ITEM_ID" ] || [ "$ITEM_ID" = "null" ]; then
               echo "::error ::Failed to add item to project."; sed -n '1,120p' add.json; exit 1;
@@ -187,7 +194,14 @@ jobs:
           # FIX 2: Define query on a SINGLE line
           QUERY='mutation($project:ID!, $item:ID!, $field:ID!, $option:String!) { updateProjectV2ItemFieldValue(input:{ projectId:$project, itemId:$item, fieldId:$field, value:{ singleSelectOptionId:$option } }) { projectV2Item { id } } }'
           
+          # Construct the final JSON payload
+          FULL_PAYLOAD="{\"query\":\"$QUERY\", \"variables\":$VARS}"
+      
+          # --- CRITICAL DEBUG ADDITION ---
+          echo "Final JSON Payload (Piped): $FULL_PAYLOAD"
+          # -------------------------------
+          
           # FIX 3: Use echo | gh pipe for robust payload delivery
-          echo "{\"query\":\"$QUERY\", \"variables\":$VARS}" | gh api graphql --method POST -H 'Content-Type: application/json'
+          echo "$FULL_PAYLOAD" | gh api graphql --method POST -H 'Content-Type: application/json'
           
           echo "Set Status => $DESIRED"
