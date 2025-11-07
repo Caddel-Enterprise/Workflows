@@ -91,15 +91,15 @@ jobs:
         if: ${{ steps.decide.outputs.desired != '' }}
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
-          ORG: Caddel-Enterprise
-          PROJECT_NUMBER: 2
+          ORG: next-wave-dev-org
+          PROJECT_NUMBER: 6
           DESIRED: ${{ steps.decide.outputs.desired }}
           ISSUE_NODE_ID: ${{ github.event.issue.node_id }}
           PR_NODE_ID: ${{ github.event.pull_request.node_id }}
         run: |
           set -e
-
-          # Fetch Project + Status field + options
+          
+          # Fetch Project + Status field + options (using the existing successful query)
           gh api graphql -f query='
             query($org:String!, $number:Int!){
               organization(login:$org){
@@ -119,24 +119,11 @@ jobs:
               }
             }' -F org="$ORG" -F number="$PROJECT_NUMBER" > project.json
           
-          # --- NEW DEBUG ADDITION ---
-          echo "--- Contents of project.json ---"
-          head -n 50 project.json
-          echo "--------------------------------"
-        
-              PROJECT_ID=$(jq -r '.data.organization.projectV2.id' project.json)
-              STATUS_FIELD_ID=$(jq -r '.data.organization.projectV2.fields.nodes[] | select(.name=="Status") | .id' project.json)
-              OPTION_ID=$(jq -r --arg n "$DESIRED" \
-                '.data.organization.projectV2.fields.nodes[] | select(.name=="Status") | .options[] | select(.name==$n) | .id' project.json)
-
-          # Guards: ensure we have string-like IDs (not empty/numeric)
-          req() { test -n "$1" && [[ ! "$1" =~ ^[0-9]+$ ]] || { echo "::error ::Missing or numeric ID for $2"; cat project.json; exit 1; }; }
-          req "$PROJECT_ID" "PROJECT_ID"
-          req "$STATUS_FIELD_ID" "STATUS_FIELD_ID"
-          req "$OPTION_ID" "OPTION_ID for '$DESIRED'"
-
-          # Determine content node id (issue or PR)
-          CONTENT_ID="${PR_NODE_ID:-$ISSUE_NODE_ID}"
+          # 1. Parse IDs (using the existing successful jq commands)
+          PROJECT_ID=$(jq -r '.data.organization.projectV2.id' project.json)
+          STATUS_FIELD_ID=$(jq -r '.data.organization.projectV2.fields.nodes[] | select(.name=="Status") | .id' project.json)
+          OPTION_ID=$(jq -r --arg n "$DESIRED" \
+            '.data.organization.projectV2.fields.nodes[] | select(.name=="Status") | .options[] | select(.name==$n) | .id' project.json)
           
           # Guards: ensure we have string-like IDs (not empty/numeric)
           req() { test -n "$1" && [[ ! "$1" =~ ^[0-9]+$ ]] || {
@@ -145,6 +132,9 @@ jobs:
           req "$PROJECT_ID" "PROJECT_ID"
           req "$STATUS_FIELD_ID" "STATUS_FIELD_ID"
           req "$OPTION_ID" "OPTION_ID for '$DESIRED'"
+          
+          # Determine content node id (issue or PR)
+          CONTENT_ID="${PR_NODE_ID:-$ISSUE_NODE_ID}"
           req "$CONTENT_ID" "CONTENT_ID (issue/PR node_id)"
           
           echo "Debug IDs:"
@@ -152,8 +142,8 @@ jobs:
           echo "  CONTENT_ID  = ${CONTENT_ID:0:8}..."
           echo "  STATUS_FIELD= ${STATUS_FIELD_ID:0:8}..."
           echo "  OPTION_ID   = ${OPTION_ID:0:8}..."
-
-          # Try to find an existing item (first 100)
+          
+          # Try to find an existing item (first 100) (using the existing successful query)
           gh api graphql -f query='
             query($org:String!, $number:Int!){
               organization(login:$org){
@@ -167,42 +157,37 @@ jobs:
                 }
               }
             }' -F org="$ORG" -F number="$PROJECT_NUMBER" > items.json
-
+          
           ITEM_ID=$(jq -r --arg cid "$CONTENT_ID" \
             '.data.organization.projectV2.items.nodes[] | select(.content.id==$cid) | .id' items.json)
-
+          
           # Add if missing
           if [ -z "$ITEM_ID" ] || [ "$ITEM_ID" = "null" ]; then
-            # FIX: Manually construct the JSON variable string with quotes
+            # FIX 1: Manually construct VARS with guaranteed quotes
             VARS="{\"project\":\"$PROJECT_ID\", \"content\":\"$CONTENT_ID\"}"
-
-            # --- DEBUG ADDITION 1 ---
             echo "Attempting to ADD Item with VARS: $VARS"
-            # ------------------------
-        
-            # 1. Define the mutation query in a single line to be valid JSON.
-              QUERY='mutation($project:ID!, $content:ID!){ addProjectV2ItemById(input:{projectId:$project, contentId:$content}) { item { id } } }'
-    
-            # 2. Use echo and pipe the full JSON payload to stdin.
+          
+            # FIX 2: Define query on a SINGLE line
+            QUERY='mutation($project:ID!, $content:ID!){ addProjectV2ItemById(input:{projectId:$project, contentId:$content}) { item { id } } }'
+          
+            # FIX 3: Use echo | gh pipe for robust payload delivery
             echo "{\"query\":\"$QUERY\", \"variables\":$VARS}" | gh api graphql --method POST -H 'Content-Type: application/json' > add.json
-            
+          
             ITEM_ID=$(jq -r '.data.addProjectV2ItemById.item.id' add.json)
             if [ -z "$ITEM_ID" ] || [ "$ITEM_ID" = "null" ]; then
               echo "::error ::Failed to add item to project."; sed -n '1,120p' add.json; exit 1;
             fi
           fi
-
+          
           # Update Status (JSON variables)
+          # FIX 1: Manually construct VARS with guaranteed quotes
           VARS="{\"project\":\"$PROJECT_ID\", \"item\":\"$ITEM_ID\", \"field\":\"$STATUS_FIELD_ID\", \"option\":\"$OPTION_ID\"}"
-        
-          # --- DEBUG ADDITION 2 ---
           echo "Attempting to UPDATE Status with VARS: $VARS"
-          # ------------------------
-        
-          # 1. Define the mutation query in a single line to be valid JSON.
+          
+          # FIX 2: Define query on a SINGLE line
           QUERY='mutation($project:ID!, $item:ID!, $field:ID!, $option:String!) { updateProjectV2ItemFieldValue(input:{ projectId:$project, itemId:$item, fieldId:$field, value:{ singleSelectOptionId:$option } }) { projectV2Item { id } } }'
-        
-          # 2. Use echo and pipe the full JSON payload to stdin.
+          
+          # FIX 3: Use echo | gh pipe for robust payload delivery
           echo "{\"query\":\"$QUERY\", \"variables\":$VARS}" | gh api graphql --method POST -H 'Content-Type: application/json'
           
           echo "Set Status => $DESIRED"
