@@ -245,6 +245,6 @@ jobs:
             -F project="$PROJECT_ID" \
             -F item="$ITEM_ID" \
             -F field="$STATUS_FIELD_ID" \
-            -F option="$OPTION_ID"
+            -f option="$OPTION_ID"
 
           echo "Set Status => $DESIRED"
