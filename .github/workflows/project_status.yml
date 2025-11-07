@@ -126,7 +126,7 @@ jobs:
           
           # --- CONDITIONAL OPTION_ID LOOKUP ---
           if [ "$DESIRED" = "REMOVE" ]; then
-            OPTION_ID="N/A" # Set a placeholder value to bypass the 'req' guard
+            OPTION_ID="" # Clear for safety, will be checked later
           else
             # Only look up OPTION_ID if we are actually setting a status
             OPTION_ID=$(jq -r --arg n "$DESIRED" \
@@ -141,7 +141,7 @@ jobs:
           req "$PROJECT_ID" "PROJECT_ID"
           req "$STATUS_FIELD_ID" "STATUS_FIELD_ID"
           
-          # Only run the OPTION_ID check if we aren't removing the item
+          # --- CHECK FOR MISSING OPTION_ID FOR NON-REMOVE STATUSES ---
           if [ "$DESIRED" != "REMOVE" ]; then
             req "$OPTION_ID" "OPTION_ID for '$DESIRED'"
           fi
