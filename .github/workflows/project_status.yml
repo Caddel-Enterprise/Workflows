@@ -150,18 +150,19 @@ jobs:
           
           # Only run the OPTION_ID check if we aren't removing the item
           if [ "$DESIRED" != "REMOVE" ]; then
-            # We ONLY check for non-empty here, as some option IDs can be numeric strings.
+            # IMPORTANT FIX: Do NOT use the 'req' guard for OPTION_ID, as it can be a numeric string (e.g., '98236657').
+            # We only check for non-empty.
             if [ -z "$OPTION_ID" ] || [ "$OPTION_ID" = "null" ]; then
                 echo "::error ::Missing OPTION_ID for '$DESIRED'"
                 sed -n '1,200p' project.json
                 exit 1
             fi
-            # NOTE: We skip calling 'req' here to allow numeric IDs.
           fi
-          
+
           # Determine content node id (issue or PR)
           # Use PR node ID for PR events, issue node ID for issue events
           CONTENT_ID="${PR_NODE_ID:-$ISSUE_NODE_ID}"
+          req "$CONTENT_ID" "CONTENT_ID (issue/PR node_id)"
           
           req "$CONTENT_ID" "CONTENT_ID (issue/PR node_id)"
           
@@ -244,6 +245,6 @@ jobs:
             -F project="$PROJECT_ID" \
             -F item="$ITEM_ID" \
             -F field="$STATUS_FIELD_ID" \
-            -f optionId="$OPTION_ID"
+            -F option="$OPTION_ID"
 
           echo "Set Status => $DESIRED"
