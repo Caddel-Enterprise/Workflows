@@ -1,0 +1,234 @@
+name: Sync Project Status
+
+on:
+  issues:
+    types: [opened, assigned, closed, reopened]
+  pull_request:
+    types: [opened, ready_for_review, converted_to_draft, closed, reopened]
+
+jobs:
+  sync-status:
+    runs-on: ubuntu-latest
+
+    steps:
+      # ---------------------------------------
+      # Generate short-lived GitHub App token
+      # ---------------------------------------
+      - name: Generate org app token
+        id: app
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.APP_ID }}
+          private-key: ${{ secrets.APP_PEM }}
+
+      # ---------------------------------------
+      # Decide which Status to apply
+      # ---------------------------------------
+      - name: Decide desired status
+        id: decide
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          ACTION: ${{ github.event.action }}
+          IS_DRAFT: ${{ github.event.pull_request.draft }}
+          PR_MERGED: ${{ github.event.pull_request.merged }}
+        run: |
+          set -e
+          desired=""
+
+          # =======================================================
+          # Item added to project (handled via "opened" events)
+          #   - Issue opened → Backlog
+          #   - Issue assigned → In Progress
+          #   - Issue closed → Done
+          #   - Issue reopened → Ready
+          # =======================================================
+          case "$EVENT_NAME" in
+            issues)
+              case "$ACTION" in
+                opened)   desired="Backlog" ;;
+                assigned) desired="In Progress" ;;
+                closed)   desired="Done" ;;
+                reopened) desired="Ready" ;;
+              esac
+              ;;
+            pull_request)
+              case "$ACTION" in
+                opened)
+                  if [ "$IS_DRAFT" = "true" ]; then
+                    desired="In Progress"                 # Draft PR → In Progress
+                  else
+                    desired="In Review"                   # PR opened → In Review
+                  fi
+                  ;;
+                ready_for_review)   desired="In Review" ;; # PR ready → In Review
+                converted_to_draft) desired="In Progress" ;; # Back to draft → In Progress
+                closed)
+                  # Do NOT set status on close unless merged.
+                  if [ "$PR_MERGED" = "true" ]; then
+                    desired="Done"                        # Only on merge → Done
+                  else
+                    desired="REMOVE"                            # Closed w/o merge → REMOVE
+                  fi
+                  ;;
+                reopened) desired="Ready" ;;
+              esac
+              ;;
+          esac
+
+          echo "desired=$desired" >> $GITHUB_OUTPUT
+
+      # ---------------------------------------
+      # Skip if nothing to update
+      # ---------------------------------------
+      - name: Skip if nothing to do
+        if: ${{ steps.decide.outputs.desired == '' }}
+        run: echo "No status change needed for this event."
+
+      # ---------------------------------------
+      # Update Project Status field via GraphQL
+      # (robust: resolve IDs and send JSON variables)
+      # ---------------------------------------
+      - name: Set Status in Project
+        if: ${{ steps.decide.outputs.desired != '' }}
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          ORG: Caddel-Enterprise
+          PROJECT_NUMBER: 2
+          DESIRED: ${{ steps.decide.outputs.desired }}
+          ISSUE_NODE_ID: ${{ github.event.issue.node_id }}
+          PR_NODE_ID: ${{ github.event.pull_request.node_id }}
+        run: |
+          set -e
+          
+          # Fetch Project + Status field + options (using the existing successful query)
+          gh api graphql -f query='
+            query($org:String!, $number:Int!){
+              organization(login:$org){
+                projectV2(number:$number){
+                  id
+                  fields(first:100){
+                    nodes{
+                      __typename
+                      ... on ProjectV2SingleSelectField {
+                        id
+                        name
+                        options { id name }
+                      }
+                    }
+                  }
+                }
+              }
+            }' -F org="$ORG" -F number="$PROJECT_NUMBER" > project.json
+          
+          # 1. Parse IDs (using the existing successful jq commands)
+          PROJECT_ID=$(jq -r '.data.organization.projectV2.id' project.json)
+          STATUS_FIELD_ID=$(jq -r '.data.organization.projectV2.fields.nodes[] | select(.name=="Status") | .id' project.json)
+          
+          # --- CONDITIONAL OPTION_ID LOOKUP ---
+          if [ "$DESIRED" = "REMOVE" ]; then
+            OPTION_ID="N/A" # Set a placeholder value to bypass the 'req' guard
+          else
+            # Only look up OPTION_ID if we are actually setting a status
+            OPTION_ID=$(jq -r --arg n "$DESIRED" \
+              '.data.organization.projectV2.fields.nodes[] | select(.name=="Status") | .options[] | select(.name==$n) | .id' project.json)
+          fi
+          # ------------------------------------
+          
+          # Guards: ensure we have string-like IDs (not empty/numeric)
+          req() { test -n "$1" && [[ ! "$1" =~ ^[0-9]+$ ]] || {
+            echo "::error ::Missing or numeric ID for $2"; sed -n '1,200p' project.json; exit 1;
+          }; }
+          req "$PROJECT_ID" "PROJECT_ID"
+          req "$STATUS_FIELD_ID" "STATUS_FIELD_ID"
+          
+          # Only run the OPTION_ID check if we aren't removing the item
+          if [ "$DESIRED" != "REMOVE" ]; then
+            req "$OPTION_ID" "OPTION_ID for '$DESIRED'"
+          fi
+          
+          # Determine content node id (issue or PR)
+          CONTENT_ID="${PR_NODE_ID:-$ISSUE_NODE_ID}"
+          req "$CONTENT_ID" "CONTENT_ID (issue/PR node_id)"
+          
+          echo "Debug IDs:"
+          echo "  PROJECT_ID  = ${PROJECT_ID:0:8}..."
+          echo "  CONTENT_ID  = ${CONTENT_ID:0:8}..."
+          echo "  STATUS_FIELD= ${STATUS_FIELD_ID:0:8}..."
+          echo "  OPTION_ID   = ${OPTION_ID:0:8}..."
+          
+          # Try to find an existing item (first 100) (using the existing successful query)
+          gh api graphql -f query='
+            query($org:String!, $number:Int!){
+              organization(login:$org){
+                projectV2(number:$number){
+                  items(first:100){
+                    nodes{
+                      id
+                      content { __typename ... on Issue { id } ... on PullRequest { id } }
+                    }
+                  }
+                }
+              }
+            }' -F org="$ORG" -F number="$PROJECT_NUMBER" > items.json
+          
+          ITEM_ID=$(jq -r --arg cid "$CONTENT_ID" \
+            '.data.organization.projectV2.items.nodes[] | select(.content.id==$cid) | .id' items.json)
+          
+          # --- Delete Item if PR was closed without merging (DESIRED=REMOVE) ---
+          if [ "$DESIRED" = "REMOVE" ] && [ -n "$ITEM_ID" ] && [ "$ITEM_ID" != "null" ]; then
+            echo "Attempting to DELETE Item: $ITEM_ID"
+
+            # GraphQL Mutation to delete the item
+            gh api graphql -f query='
+              mutation($project:ID!, $item:ID!){
+                deleteProjectV2Item(input:{projectId:$project, itemId:$item}) { deletedItemId }
+              }' \
+              -F project="$PROJECT_ID" \
+              -F item="$ITEM_ID"
+
+            echo "Item removed from project board."
+            exit 0 # Exit successfully since no further action (add/update) is needed.
+          fi
+          # ------------------------------------------------------------------------
+          
+          # Add if missing
+          if [ -z "$ITEM_ID" ] || [ "$ITEM_ID" = "null" ]; then
+          
+            echo "Attempting to ADD Item."
+
+            # Use the simple -F flag, but always double-quote the shell variables
+            gh api graphql -f query='
+              mutation($project:ID!, $content:ID!){
+                addProjectV2ItemById(input:{projectId:$project, contentId:$content}) {
+                  item { id }
+                }
+              }' \
+              -F project="$PROJECT_ID" \
+              -F content="$CONTENT_ID" > add.json
+          
+            ITEM_ID=$(jq -r '.data.addProjectV2ItemById.item.id' add.json)
+            if [ -z "$ITEM_ID" ] || [ "$ITEM_ID" = "null" ]; then
+              echo "::error ::Failed to add item to project."; sed -n '1,120p' add.json; exit 1;
+            fi
+          fi
+          
+          # Update Status
+          
+          echo "Attempting to UPDATE Status."
+
+          # Use the simple -F flag, double-quoting all shell variables
+          gh api graphql -f query='
+            mutation($project:ID!, $item:ID!, $field:ID!, $option:String!) {
+              updateProjectV2ItemFieldValue(input:{
+                projectId:$project,
+                itemId:$item,
+                fieldId:$field,
+                value:{ singleSelectOptionId:$option }
+              }) { clientMutationId }
+            }' \
+            -F project="$PROJECT_ID" \
+            -F item="$ITEM_ID" \
+            -F field="$STATUS_FIELD_ID" \
+            -F option="$OPTION_ID"
+
+          echo "Set Status => $DESIRED"
